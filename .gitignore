@@ -1,0 +1,44 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+pytest-of-*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+build/
+dist/
+outputs/
+work/
+*.egg-info/
+*.spec
+
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+
+*.log
+logs/
+
+# Local API discovery and credentials
+connection.json
+api_token
+
+# Qt WebEngine profiles, browser sessions, and caches
+webengine/
+WebEngine/
+QtWebEngine/
+GPUCache/
+Code Cache/
+DawnCache/
+app-data/
+local-data/
