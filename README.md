@@ -11,6 +11,7 @@ This first vertical slice provides:
 - a persistent WebEngine profile for cookies, login, cache, and site data;
 - safe saving and restoration of window position, size, and maximized state;
 - close-to-tray behavior with **Show/Hide Player** and **Exit** actions;
+- per-user single-instance protection;
 - console logging plus a rotating log file;
 - explicit application shutdown.
 - an authenticated localhost WebSocket API for playback state and controls.
@@ -91,10 +92,16 @@ python -m pip install -e ".[build]"
 .\scripts\build_windows.ps1
 ```
 
-The result is written to `outputs\YouTubeMusicDesktop`, and a distributable
-`outputs\YouTubeMusicDesktop-windows-x64.zip` archive is created beside it.
+The result is written to `outputs\YouTubeMusicDesktop`, and a versioned
+`outputs\YouTubeMusicDesktop-<version>-windows-x64.zip` archive is created
+beside it. The build embeds the application icon and Windows product/file
+metadata and includes `README.md` and the frozen `PROTOCOL.md`.
 Qt WebEngine is intentionally packaged as a folder rather than a single-file
 executable because it relies on helper processes and runtime resources.
+
+Windows identifies the process as `YouTubeMusicDesktop.Player`. Because pinned
+taskbar shortcuts can cache older icons, use the manual validation steps in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) after rebuilding.
 
 ## Tests
 
@@ -109,6 +116,9 @@ Closing the window hides it in the Windows notification area. Use the tray
 menu's **Exit** action to stop the application completely. If the system tray
 is unavailable, closing the window exits normally so the process cannot become
 inaccessible.
+
+Only one player instance runs per Windows user/session. A second launch exits
+cleanly; it does not attempt to focus the existing window.
 
 ## Local data
 
@@ -130,16 +140,25 @@ src/ytmusic_player/
   web.py            persistent WebEngine profile and view
   settings.py       safe window-state persistence
   logging_setup.py  logging configuration
+  metadata.py       authoritative identity and version
+  windows_identity.py Windows AppUserModelID setup
+  single_instance.py per-user Qt lock-file guard
   playback_state.py canonical playback state
   playback_bridge.py YouTube Music DOM-to-state adapter
   playback_controller.py page command adapter
   protocol.py       V1 validation and serialization
   connection_info.py token and discovery-file handling
   websocket_server.py authenticated Qt WebSocket service
+  resources.py      packaged window and tray icon
+  assets/icons/     original PNGs and Windows icon
 packaging/
   launcher.py       PyInstaller entry point
 scripts/
   build_windows.ps1 repeatable Windows bundle build
 tools/
+  build_icons.py    regenerate the multi-size Windows icon
+  build_version_info.py generate executable version resources
   test_client.py    small local protocol development client
 ```
+
+The focused manual release checks are in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).

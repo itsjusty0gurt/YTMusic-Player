@@ -22,6 +22,7 @@ work/
 
 .idea/
 .vscode/
+.codex-remote-attachments/
 *.swp
 Thumbs.db
 Desktop.ini
@@ -32,6 +33,7 @@ logs/
 # Local API discovery and credentials
 connection.json
 api_token
+instance.lock
 
 # Qt WebEngine profiles, browser sessions, and caches
 webengine/

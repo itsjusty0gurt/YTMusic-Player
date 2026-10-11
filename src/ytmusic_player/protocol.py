@@ -5,13 +5,14 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .metadata import APP_VERSION
 from .playback_state import PlaybackState, isoformat_utc, utc_now
 
 
 PROTOCOL_VERSION = 1
 SUPPORTED_VERSIONS = (PROTOCOL_VERSION,)
 SERVER_NAME = "YouTube Music Desktop"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = APP_VERSION
 POSITION_SYNC_INTERVAL_MS = 10_000
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_CLIENT_TEXT_LENGTH = 128

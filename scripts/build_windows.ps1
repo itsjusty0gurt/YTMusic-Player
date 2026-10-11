@@ -9,10 +9,15 @@ $outputRoot = Join-Path $projectRoot "outputs"
 $workRoot = Join-Path $projectRoot "work\pyinstaller"
 $bundleName = "YouTubeMusicDesktop"
 $bundlePath = Join-Path $outputRoot $bundleName
-$archivePath = Join-Path $outputRoot "$bundleName-windows-x64.zip"
+$iconDirectory = Join-Path $projectRoot "src\ytmusic_player\assets\icons"
+$iconPath = Join-Path $iconDirectory "youtube_music_desktop.ico"
+$versionInfoPath = Join-Path $workRoot "windows-version-info.txt"
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Virtual environment not found. Create .venv and install the project first."
+}
+if (-not (Test-Path -LiteralPath $iconPath)) {
+    throw "Application icon not found. Run: .\.venv\Scripts\python.exe .\tools\build_icons.py"
 }
 
 & $python -c "import PyInstaller" 2>$null
@@ -20,8 +25,19 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller is not installed. Run: .\.venv\Scripts\python.exe -m pip install -e '.[build]'"
 }
 
+$appVersion = (& $python -c "from ytmusic_player.metadata import APP_VERSION; print(APP_VERSION)").Trim()
+if ($LASTEXITCODE -ne 0 -or -not $appVersion) {
+    throw "Unable to read the application version."
+}
+$archivePath = Join-Path $outputRoot "$bundleName-$appVersion-windows-x64.zip"
+
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
+
+& $python (Join-Path $projectRoot "tools\build_version_info.py") --output $versionInfoPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to generate Windows version metadata."
+}
 
 if (Test-Path -LiteralPath $bundlePath) {
     Remove-Item -LiteralPath $bundlePath -Recurse -Force
@@ -38,6 +54,9 @@ try {
         --windowed `
         --onedir `
         --name $bundleName `
+        --icon $iconPath `
+        --version-file $versionInfoPath `
+        --add-data "$iconDirectory;ytmusic_player/assets/icons" `
         --paths (Join-Path $projectRoot "src") `
         --distpath $outputRoot `
         --workpath $workRoot `

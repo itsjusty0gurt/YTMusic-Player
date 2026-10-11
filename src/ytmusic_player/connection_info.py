@@ -15,6 +15,7 @@ from .protocol import SUPPORTED_VERSIONS
 
 TOKEN_FILENAME = "api_token"
 CONNECTION_FILENAME = "connection.json"
+INSTANCE_LOCK_FILENAME = "instance.lock"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,10 @@ def connection_file_path() -> Path:
 
 def token_file_path() -> Path:
     return application_data_directory() / TOKEN_FILENAME
+
+
+def instance_lock_file_path() -> Path:
+    return application_data_directory() / INSTANCE_LOCK_FILENAME
 
 
 def get_or_create_token(path: Path) -> str:

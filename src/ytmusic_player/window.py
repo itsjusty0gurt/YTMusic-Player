@@ -6,6 +6,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QStyle, QSystemTrayIcon
 
+from .resources import application_icon
 from .settings import restore_window_state, save_window_state
 from .web import WebSession
 
@@ -23,7 +24,9 @@ class PlayerWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         self.setCentralWidget(web_session.create_view())
 
-        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        icon = application_icon()
+        if icon.isNull():
+            icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
         self.setWindowIcon(icon)
 
         self._toggle_action = QAction("Hide Player", self)
@@ -38,7 +41,7 @@ class PlayerWindow(QMainWindow):
         tray_menu.addAction(self._exit_action)
 
         self._tray = QSystemTrayIcon(icon, self)
-        self._tray.setToolTip("YouTube Music")
+        self._tray.setToolTip("YouTube Music Desktop")
         self._tray.setContextMenu(tray_menu)
         self._tray.activated.connect(self._on_tray_activated)
 
@@ -76,6 +79,10 @@ class PlayerWindow(QMainWindow):
         self.close()
         QApplication.quit()
 
+    def prepare_for_shutdown(self) -> None:
+        """Remove the tray icon before the Qt event loop exits."""
+        self._tray.hide()
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt API name)
         self.persist_window_state()
         if self._exit_requested or not self._tray_available:
@@ -88,8 +95,8 @@ class PlayerWindow(QMainWindow):
         LOGGER.info("Close intercepted; player hidden to system tray")
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason in {
-            QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.DoubleClick,
-        }:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            if not self.isVisible() or self.isMinimized():
+                self.toggle_visibility()
+        elif reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.toggle_visibility()
