@@ -7,12 +7,16 @@ from typing import Any
 from PySide6.QtCore import QObject
 from PySide6.QtWebEngineCore import QWebEnginePage
 
+from .playback_commands import PLAYBACK_COMMANDS
+
 
 CommandCallback = Callable[[bool, str | None, str | None], None]
 
 
 class PlaybackController(QObject):
     """Dispatch validated commands to the YouTube Music page."""
+
+    supported_commands = PLAYBACK_COMMANDS
 
     def __init__(self, page: QWebEnginePage, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -67,6 +71,42 @@ JSON.stringify((() => {{
   const video = document.querySelector('video');
   if (!video) return {{ok: false, code: 'player_unavailable', message: 'The YouTube Music player is not currently available.'}};
 
+  const findPlayerControl = (label) => {{
+    const bar = document.querySelector('ytmusic-player-bar');
+    if (!bar) return null;
+
+    const normalizedLabel = label.toLocaleLowerCase();
+    const matchesLabel = (node) => [
+      node.getAttribute('aria-label'),
+      node.getAttribute('title')
+    ].some((value) => typeof value === 'string'
+      && value.trim().toLocaleLowerCase() === normalizedLabel);
+    const isUsable = (node) => node
+      && node.isConnected
+      && node.disabled !== true
+      && node.getAttribute('aria-disabled') !== 'true'
+      && !node.closest('[disabled], [aria-disabled="true"]');
+
+    const semanticButton = Array.from(
+      bar.querySelectorAll('button, [role="button"]')
+    ).find((node) => matchesLabel(node) && isUsable(node));
+    if (semanticButton) return semanticButton;
+
+    const semanticHost = Array.from(
+      bar.querySelectorAll('yt-icon-button[title]')
+    ).find((node) => matchesLabel(node) && isUsable(node));
+    if (semanticHost) {{
+      const innerButton = semanticHost.querySelector('button, [role="button"]');
+      return isUsable(innerButton) ? innerButton : semanticHost;
+    }}
+
+    const fallbackSelector = label === 'Next' ? '.next-button' : '.previous-button';
+    const fallbackHost = bar.querySelector(fallbackSelector);
+    if (!isUsable(fallbackHost)) return null;
+    const fallbackButton = fallbackHost.querySelector('button, [role="button"]');
+    return isUsable(fallbackButton) ? fallbackButton : fallbackHost;
+  }};
+
   try {{
     switch (request.command) {{
       case 'play':
@@ -79,13 +119,13 @@ JSON.stringify((() => {{
         if (video.paused) video.play(); else video.pause();
         return {{ok: true}};
       case 'next': {{
-        const button = document.querySelector('ytmusic-player-bar .next-button');
+        const button = findPlayerControl('Next');
         if (!button) return {{ok: false, code: 'player_unavailable', message: 'Next track control is unavailable.'}};
         button.click();
         return {{ok: true}};
       }}
       case 'previous': {{
-        const button = document.querySelector('ytmusic-player-bar .previous-button');
+        const button = findPlayerControl('Previous');
         if (!button) return {{ok: false, code: 'player_unavailable', message: 'Previous track control is unavailable.'}};
         button.click();
         return {{ok: true}};

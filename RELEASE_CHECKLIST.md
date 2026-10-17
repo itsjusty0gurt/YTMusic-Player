@@ -35,6 +35,16 @@ system icon cache. Instead, unpin the old entry before validating a rebuilt app.
 - [ ] Restart and reconnect work.
 - [ ] `connection.json` is removed after a clean exit.
 
+### Next/previous live-track verification
+
+- [ ] Start playback of a real track.
+- [ ] Send `next` through the WebSocket API and confirm a successful command result.
+- [ ] Confirm the track advances and the observed state reports the new track.
+- [ ] Send `previous` and confirm a successful command result.
+- [ ] Confirm YouTube Music returns to the previous track or restarts the current
+      track according to its normal behavior, with a matching observed state.
+- [ ] Recheck play, pause, play/pause, volume, and mute.
+
 ## Release contents
 
 - [ ] The bundle contains `README.md`, `PROTOCOL.md`, icons, Qt WebEngine, and

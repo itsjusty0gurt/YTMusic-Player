@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .metadata import APP_VERSION
+from .playback_commands import PLAYBACK_COMMANDS
 from .playback_state import PlaybackState, isoformat_utc, utc_now
 
 
@@ -17,15 +18,7 @@ POSITION_SYNC_INTERVAL_MS = 10_000
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_CLIENT_TEXT_LENGTH = 128
 
-COMMANDS = (
-    "play",
-    "pause",
-    "play_pause",
-    "next",
-    "previous",
-    "set_volume",
-    "set_muted",
-)
+COMMANDS = PLAYBACK_COMMANDS
 
 
 class ProtocolViolation(ValueError):
