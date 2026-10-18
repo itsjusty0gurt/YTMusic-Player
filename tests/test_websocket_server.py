@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, QUrl
 from PySide6.QtNetwork import QHostAddress, QTcpServer
 from PySide6.QtWebSockets import QWebSocket
 
-from ytmusic_player.playback_state import PlaybackStateStore
+from ytmusic_player.playback_state import (
+    AudioState,
+    PlaybackDetails,
+    PlaybackState,
+    PlaybackStateStore,
+    PlaybackStatus,
+    TrackMetadata,
+)
 from ytmusic_player.websocket_server import LocalWebSocketServer
 
 
@@ -183,4 +191,80 @@ def test_two_clients_remain_independent(tmp_path) -> None:
         assert received[second][-1]["request_id"] == "still-connected"
     finally:
         second.close()
+        server.stop()
+
+
+def test_track_change_broadcasts_complete_state_with_next_sequence(tmp_path) -> None:
+    _app()
+    store = PlaybackStateStore()
+    server = LocalWebSocketServer(
+        store,
+        FakeController(),
+        TOKEN,
+        tmp_path / "connection.json",
+        preferred_port=0,
+    )
+    port = server.start()
+    socket = QWebSocket()
+    loop = QEventLoop()
+    messages: list[dict] = []
+
+    socket.connected.connect(
+        lambda: socket.sendTextMessage(
+            json.dumps(
+                {
+                    "type": "hello",
+                    "protocol_versions": [1],
+                    "client": {"name": "State publication test", "version": "1"},
+                    "auth": {"token": TOKEN},
+                }
+            )
+        )
+    )
+
+    changed_state = PlaybackState(
+        playback=PlaybackDetails(
+            status=PlaybackStatus.PLAYING,
+            position_ms=1234,
+            position_sampled_at=datetime(2026, 1, 1, tzinfo=UTC),
+            duration_ms=180_000,
+        ),
+        track=TrackMetadata(
+            title="Published Track",
+            artist="Published Artist",
+            album=None,
+            media_id=None,
+            artwork_url=None,
+        ),
+        audio=AudioState(volume=64, muted=False),
+    )
+
+    def receive(text: str) -> None:
+        message = json.loads(text)
+        messages.append(message)
+        if message.get("type") == "state" and message.get("reason") == "initial":
+            store.update(changed_state, "track_changed")
+        elif message.get("type") == "state" and message.get("reason") == "track_changed":
+            loop.quit()
+
+    socket.textMessageReceived.connect(receive)
+    socket.open(QUrl(f"ws://127.0.0.1:{port}"))
+    QTimer.singleShot(3000, loop.quit)
+    loop.exec()
+
+    try:
+        states = [message for message in messages if message["type"] == "state"]
+        assert len(states) == 2
+        assert states[1]["sequence"] == states[0]["sequence"] + 1
+        assert states[1]["reason"] == "track_changed"
+        assert states[1]["metadata_available"] is True
+        assert states[1]["track"] == {
+            "title": "Published Track",
+            "artist": "Published Artist",
+            "album": None,
+            "media_id": None,
+            "artwork": {"url": None},
+        }
+    finally:
+        socket.close()
         server.stop()
