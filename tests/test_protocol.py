@@ -188,14 +188,27 @@ def test_null_optional_metadata_serialization() -> None:
     sampled_at = datetime(2026, 10, 4, 19, 30, tzinfo=UTC)
     state = PlaybackState(
         PlaybackDetails(PlaybackStatus.PAUSED, 123, sampled_at, 500),
-        TrackMetadata("Title", None, None, None, None),
+        TrackMetadata("Title", "Artist", None, None, None),
         AudioState(50, False),
     )
     message = state_message(state, 1, "state_refresh")
-    assert message["track"]["artist"] is None
+    assert message["metadata_available"] is True
+    assert message["track"]["artist"] == "Artist"
     assert message["track"]["album"] is None
     assert message["track"]["media_id"] is None
     assert message["track"]["artwork"]["url"] is None
+
+
+def test_blank_required_metadata_serializes_as_unavailable() -> None:
+    sampled_at = datetime(2026, 10, 4, 19, 30, tzinfo=UTC)
+    state = PlaybackState(
+        PlaybackDetails(PlaybackStatus.PLAYING, 123, sampled_at, 500),
+        TrackMetadata("Title", None, "Album", "media", "https://example.test/art"),
+        AudioState(50, False),
+    )
+    message = state_message(state, 1, "state_refresh")
+    assert message["metadata_available"] is False
+    assert message["track"] is None
 
 
 def test_unknown_and_stopped_remain_distinct() -> None:

@@ -150,7 +150,7 @@ def state_message(
     request_id: str | None = None,
 ) -> dict[str, Any]:
     track = None
-    if state.track is not None:
+    if state.metadata_available and state.track is not None:
         track = {
             "title": state.track.title,
             "artist": state.track.artist,

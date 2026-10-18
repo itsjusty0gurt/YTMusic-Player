@@ -112,6 +112,12 @@ def test_missing_title_cleanly_disables_metadata() -> None:
     assert state.track is None
 
 
+def test_missing_artist_cleanly_disables_metadata() -> None:
+    state = PlaybackBridge._state_from_payload(_payload(artist="  "))
+    assert state.metadata_available is False
+    assert state.track is None
+
+
 def test_same_normalized_title_artist_is_not_a_track_change() -> None:
     previous = _state(title="Track  A", artist="ARTIST A", artwork="old")
     current = _state(title=" track a ", artist="artist a", artwork="new")

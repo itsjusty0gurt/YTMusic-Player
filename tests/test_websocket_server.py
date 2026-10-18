@@ -15,7 +15,7 @@ from ytmusic_player.playback_state import (
     PlaybackStatus,
     TrackMetadata,
 )
-from ytmusic_player.websocket_server import LocalWebSocketServer
+from ytmusic_player.websocket_server import ClientConnection, LocalWebSocketServer
 
 
 TOKEN = "integration-test-token-with-sufficient-length"
@@ -267,4 +267,60 @@ def test_track_change_broadcasts_complete_state_with_next_sequence(tmp_path) -> 
         }
     finally:
         socket.close()
+        server.stop()
+
+
+def test_initial_and_position_sync_preserve_track_metadata(tmp_path) -> None:
+    _app()
+    store = PlaybackStateStore()
+    state = PlaybackState(
+        playback=PlaybackDetails(
+            status=PlaybackStatus.PLAYING,
+            position_ms=4321,
+            position_sampled_at=datetime(2026, 1, 1, tzinfo=UTC),
+            duration_ms=180_000,
+        ),
+        track=TrackMetadata(
+            title="Persistent Track",
+            artist="Persistent Artist",
+            album=None,
+            media_id=None,
+            artwork_url=None,
+        ),
+        audio=AudioState(volume=64, muted=False),
+    )
+    store.update(state)
+    server = LocalWebSocketServer(
+        store,
+        FakeController(),
+        TOKEN,
+        tmp_path / "connection.json",
+        preferred_port=0,
+    )
+    port = server.start()
+    try:
+        initial_messages, _ = _exchange(port, TOKEN, 2)
+        initial = initial_messages[1]
+        assert initial["track"]["title"] == "Persistent Track"
+        assert initial["track"]["artist"] == "Persistent Artist"
+
+        class FakeSocket:
+            def __init__(self) -> None:
+                self.messages: list[dict] = []
+
+            def sendTextMessage(self, text: str) -> None:
+                self.messages.append(json.loads(text))
+
+            def close(self, *_args) -> None:
+                pass
+
+        socket = FakeSocket()
+        server._clients[socket] = ClientConnection(authenticated=True)
+        server._send_position_sync()
+        periodic = socket.messages[-1]
+        assert periodic["reason"] == "position_sync"
+        assert periodic["metadata_available"] is True
+        assert periodic["track"]["title"] == "Persistent Track"
+        assert periodic["track"]["artist"] == "Persistent Artist"
+    finally:
         server.stop()

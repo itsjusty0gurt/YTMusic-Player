@@ -300,11 +300,12 @@ class PlaybackBridge(QObject):
             status = PlaybackStatus.UNKNOWN
 
         title = _optional_text(payload.get("title"))
+        artist = _optional_text(payload.get("artist"))
         track = None
-        if title is not None:
+        if title is not None and artist is not None:
             track = TrackMetadata(
                 title=title,
-                artist=_optional_text(payload.get("artist")),
+                artist=artist,
                 album=_optional_text(payload.get("album")),
                 media_id=_optional_text(payload.get("media_id")),
                 artwork_url=_optional_text(payload.get("artwork_url")),

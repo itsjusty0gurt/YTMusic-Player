@@ -53,7 +53,12 @@ class PlaybackState:
 
     @property
     def metadata_available(self) -> bool:
-        return self.track is not None
+        return bool(
+            self.track is not None
+            and self.track.title.strip()
+            and self.track.artist
+            and self.track.artist.strip()
+        )
 
     @classmethod
     def unknown(cls) -> PlaybackState:
