@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import time
 
 from PySide6.QtCore import QCoreApplication, QObject, QEventLoop, QTimer, Signal
 
@@ -68,13 +69,19 @@ def test_reader_is_scoped_to_current_player_bar_and_has_semantic_fallbacks() -> 
     assert "yt-formatted-string.byline" in READ_PLAYBACK_STATE_SCRIPT
     assert "playerData?.title" in READ_PLAYBACK_STATE_SCRIPT
     assert "playerData?.author" in READ_PLAYBACK_STATE_SCRIPT
+    assert "#movie_player')?.getVideoData" in READ_PLAYBACK_STATE_SCRIPT
+    assert "navigator.mediaSession?.metadata" in READ_PLAYBACK_STATE_SCRIPT
+    assert "video will play after ad" in READ_PLAYBACK_STATE_SCRIPT
+    assert "parsed.origin === location.origin" in READ_PLAYBACK_STATE_SCRIPT
     assert "document.querySelectorAll" not in READ_PLAYBACK_STATE_SCRIPT
 
 
 def test_observer_watches_player_bar_and_video_events() -> None:
+    assert INSTALL_PLAYBACK_OBSERVER_SCRIPT.startswith("\nJSON.stringify")
     assert "new MutationObserver" in INSTALL_PLAYBACK_OBSERVER_SCRIPT
     assert "closest?.('ytmusic-player-bar')" in INSTALL_PLAYBACK_OBSERVER_SCRIPT
     assert "'play', 'pause', 'ended'" in INSTALL_PLAYBACK_OBSERVER_SCRIPT
+    assert "observer.observe(document.documentElement" in INSTALL_PLAYBACK_OBSERVER_SCRIPT
 
 
 def test_payload_produces_complete_canonical_metadata() -> None:
@@ -160,11 +167,16 @@ class _FakePage(QObject):
     loadStarted = Signal()
     loadFinished = Signal(bool)
 
-    def setWebChannel(self, channel) -> None:
-        self.channel = channel
+    def __init__(self, response=None) -> None:
+        super().__init__()
+        self.response = response
+        self.scripts = []
 
     def runJavaScript(self, script, callback=None) -> None:
         self.last_script = script
+        self.scripts.append(script)
+        if callback is not None and self.response is not None:
+            callback(self.response)
 
 
 def test_rapid_partial_samples_are_coalesced() -> None:
@@ -185,3 +197,100 @@ def test_rapid_partial_samples_are_coalesced() -> None:
     assert observed[0][0].track.title == "Final"
     assert observed[0][0].track.artist == "Final Artist"
     assert observed[0][1] == "state_refresh"
+
+
+def test_player_bar_can_appear_after_observer_initialization() -> None:
+    QCoreApplication.instance() or QCoreApplication([])
+    page = _FakePage({"installed": True, "reused": False})
+    bridge = PlaybackBridge(page, PlaybackStateStore())
+
+    bridge._on_load_finished(True)
+
+    assert INSTALL_PLAYBACK_OBSERVER_SCRIPT in page.scripts
+    assert READ_PLAYBACK_STATE_SCRIPT in page.scripts
+    assert "document.documentElement" in INSTALL_PLAYBACK_OBSERVER_SCRIPT
+    assert "node.querySelector?.('ytmusic-player-bar')" in INSTALL_PLAYBACK_OBSERVER_SCRIPT
+
+
+def test_fallback_poll_recovers_complete_metadata() -> None:
+    QCoreApplication.instance() or QCoreApplication([])
+    page = _FakePage(_payload(media_id="recovered-id"))
+    store = PlaybackStateStore()
+    bridge = PlaybackBridge(page, store)
+    bridge._page_ready = True
+
+    bridge.poll()
+    bridge._process_pending_sample()
+
+    assert page.last_script == READ_PLAYBACK_STATE_SCRIPT
+    assert store.current.metadata_available is True
+    assert store.current.track is not None
+    assert store.current.track.media_id == "recovered-id"
+
+
+def test_brief_empty_sample_preserves_active_track_metadata() -> None:
+    QCoreApplication.instance() or QCoreApplication([])
+    store = PlaybackStateStore()
+    existing = PlaybackBridge._state_from_payload(_payload(media_id="track-a"))
+    store.update(existing)
+    bridge = PlaybackBridge(_FakePage(), store)
+    bridge._has_sample = True
+
+    bridge._queue_sample(_payload(title=None, artist=None, media_id=None))
+    bridge._process_pending_sample()
+
+    assert store.current.track == existing.track
+    assert store.current.metadata_available is True
+
+
+def test_empty_metadata_expires_after_grace_period() -> None:
+    QCoreApplication.instance() or QCoreApplication([])
+    store = PlaybackStateStore()
+    store.update(PlaybackBridge._state_from_payload(_payload(media_id="track-a")))
+    bridge = PlaybackBridge(_FakePage(), store)
+    bridge._has_sample = True
+    bridge._metadata_missing_since = time.monotonic() - 11
+
+    bridge._queue_sample(_payload(title=None, artist=None, media_id=None))
+    bridge._process_pending_sample()
+
+    assert store.current.metadata_available is False
+    assert store.current.track is None
+
+
+def test_duration_reset_then_late_metadata_emits_track_changed() -> None:
+    QCoreApplication.instance() or QCoreApplication([])
+    store = PlaybackStateStore()
+    first = PlaybackBridge._state_from_payload(
+        _payload(media_id="track-a", duration_ms=1_050_324, position_ms=900_000)
+    )
+    store.update(first)
+    bridge = PlaybackBridge(_FakePage(), store)
+    bridge._has_sample = True
+    reasons = []
+    store.state_changed.connect(lambda _state, reason: reasons.append(reason))
+
+    bridge._queue_sample(
+        _payload(
+            title=None,
+            artist=None,
+            media_id=None,
+            duration_ms=271_000,
+            position_ms=0,
+        )
+    )
+    bridge._process_pending_sample()
+    bridge._queue_sample(
+        _payload(
+            title="Track B",
+            artist="Artist B",
+            media_id="track-b",
+            duration_ms=271_000,
+            position_ms=500,
+        )
+    )
+    bridge._process_pending_sample()
+
+    assert reasons == ["state_refresh", "track_changed"]
+    assert store.current.track is not None
+    assert store.current.track.media_id == "track-b"

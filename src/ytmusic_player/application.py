@@ -6,6 +6,7 @@ import sys
 from PySide6.QtCore import QCoreApplication, QSettings, Qt
 from PySide6.QtWidgets import QApplication
 
+from .build_identity import current_build_identity
 from .connection_info import (
     connection_file_path,
     get_or_create_token,
@@ -44,7 +45,16 @@ class PlayerApplication:
         self.qt_app.setWindowIcon(application_icon())
 
         log_path = configure_logging()
+        build = current_build_identity()
         LOGGER.info("Starting YouTube Music Desktop")
+        LOGGER.info(
+            "Build identity: version=%s source=%s built_at=%s frozen=%s executable=%s",
+            APP_VERSION,
+            build.source_id,
+            build.built_at,
+            bool(getattr(sys, "frozen", False)),
+            sys.executable,
+        )
         LOGGER.info("Log file: %s", log_path)
 
         self.instance_lock = SingleInstanceLock(instance_lock_file_path())

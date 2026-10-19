@@ -18,6 +18,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--volume", type=int)
     parser.add_argument("--muted", choices=["true", "false"])
+    parser.add_argument(
+        "--watch-seconds",
+        type=int,
+        default=0,
+        help="Keep printing state messages for this many seconds after connecting.",
+    )
     return parser.parse_args()
 
 
@@ -59,8 +65,10 @@ def main() -> int:
             elif args.command == "set_muted":
                 command["args"] = {"muted": args.muted == "true"}
             socket.sendTextMessage(json.dumps(command))
-        elif message.get("type") == "command_result" or (
-            message.get("type") == "state" and not args.command
+        elif args.watch_seconds <= 0 and (
+            message.get("type") == "command_result" or (
+                message.get("type") == "state" and not args.command
+            )
         ):
             socket.close()
             app.quit()
@@ -69,7 +77,8 @@ def main() -> int:
     socket.textMessageReceived.connect(received)
     socket.errorOccurred.connect(lambda _error: app.exit(1))
     socket.open(QUrl(f"ws://{info['host']}:{info['port']}"))
-    QTimer.singleShot(5000, lambda: app.exit(2))
+    timeout_ms = args.watch_seconds * 1000 if args.watch_seconds > 0 else 5000
+    QTimer.singleShot(timeout_ms, lambda: (socket.close(), app.quit()))
     return app.exec()
 
 

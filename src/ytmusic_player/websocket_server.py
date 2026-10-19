@@ -4,7 +4,6 @@ import logging
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, QUrl
 from PySide6.QtNetwork import QHostAddress
@@ -135,7 +134,6 @@ class LocalWebSocketServer(QObject):
         if not recipients:
             return
         payload = state_message(state, self._sequence.next(), reason)
-        _log_state_summary(payload)
         message = serialize_message(payload)
         for socket in recipients:
             socket.sendTextMessage(message)
@@ -218,7 +216,6 @@ class LocalWebSocketServer(QObject):
             reason,
             request_id,
         )
-        _log_state_summary(message)
         socket.sendTextMessage(serialize_message(message))
 
     def _send_position_sync(self) -> None:
@@ -267,27 +264,3 @@ def _origin_allowed(origin: str) -> bool:
         return True
     url = QUrl(origin)
     return url.isValid() and url.host().lower() in {"127.0.0.1", "localhost"}
-
-
-def _log_state_summary(message: dict[str, Any]) -> None:
-    track = message.get("track") or {}
-    artwork = track.get("artwork") or {}
-    playback = message.get("playback") or {}
-    # Keep normal playback quiet while retaining a sanitized diagnostic at
-    # DEBUG level. Authentication and raw client payloads are never included.
-    LOGGER.debug(
-        "State payload sequence=%s reason=%s metadata_available=%s "
-        "title=%s artist=%s album=%s media_id=%s artwork=%s status=%s "
-        "duration_ms=%s position_ms=%s",
-        message.get("sequence"),
-        message.get("reason"),
-        message.get("metadata_available"),
-        track.get("title") or "EMPTY",
-        track.get("artist") or "EMPTY",
-        track.get("album") or "EMPTY",
-        track.get("media_id") or "EMPTY",
-        "present" if artwork.get("url") else "empty",
-        playback.get("status"),
-        playback.get("duration_ms"),
-        playback.get("position_ms"),
-    )

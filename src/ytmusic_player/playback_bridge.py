@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from dataclasses import replace
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer
@@ -23,6 +25,7 @@ FALLBACK_POLL_INTERVAL_MS = 5000
 OBSERVER_TRANSPORT_INTERVAL_MS = 500
 SAMPLE_DEBOUNCE_MS = 300
 SEEK_THRESHOLD_MS = 3000
+METADATA_GRACE_SECONDS = 10.0
 
 # All YouTube-specific DOM assumptions live here. Metadata is scoped to the
 # active player bar; page-wide title/byline matches are deliberately avoided.
@@ -31,6 +34,23 @@ STATE_READER_BODY = r"""
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
     return normalized || null;
+  };
+  const usableArtist = (value) => {
+    const normalized = clean(value);
+    return normalized?.toLowerCase() === 'video will play after ad'
+      ? null : normalized;
+  };
+  const artworkUrl = (value) => {
+    const normalized = clean(value);
+    if (!normalized) return null;
+    try {
+      const parsed = new URL(normalized, location.href);
+      if (parsed.origin === location.origin && parsed.pathname === '/' &&
+          !parsed.search) return null;
+      return parsed.href;
+    } catch (_) {
+      return null;
+    }
   };
   const bar = document.querySelector('ytmusic-player-bar');
   const video = document.querySelector(
@@ -62,11 +82,15 @@ STATE_READER_BODY = r"""
 
   let playerData = null;
   try {
-    playerData = document.querySelector('ytmusic-player')?.playerApi
-      ?.getVideoData?.() || null;
+    playerData = document.querySelector('#movie_player')?.getVideoData?.()
+      || document.querySelector('ytmusic-player')?.playerApi?.getVideoData?.()
+      || bar?.playerApi?.getVideoData?.()
+      || null;
   } catch (_) {
     playerData = null;
   }
+
+  const mediaMetadata = navigator.mediaSession?.metadata || null;
 
   let mediaId = clean(playerData?.video_id);
   if (!mediaId) {
@@ -81,13 +105,21 @@ STATE_READER_BODY = r"""
     }
   }
 
-  const title = text(
-    'yt-formatted-string.title', '.title.ytmusic-player-bar', '.title'
-  ) || clean(playerData?.title);
-  const artist = bylineLinks[0] || clean(playerData?.author);
-  const album = bylineLinks.length > 1
-    ? bylineLinks[bylineLinks.length - 1] : null;
-
+  const bylineText = text('#byline', 'yt-formatted-string.byline', '.byline');
+  const bylineParts = (bylineText || '').split(/\s*[•·]\s*/).filter(Boolean);
+  const domTitle = text(
+    '#song-title', 'yt-formatted-string.title', '.title.ytmusic-player-bar',
+    '.title'
+  );
+  const domArtist = bylineLinks[0] || clean(bylineParts[0]);
+  const title = domTitle || clean(playerData?.title) || clean(mediaMetadata?.title);
+  const artist = usableArtist(domArtist) || usableArtist(playerData?.author)
+    || usableArtist(mediaMetadata?.artist);
+  const album = (bylineLinks.length > 1
+    ? bylineLinks[bylineLinks.length - 1] : clean(bylineParts[1]))
+    || clean(mediaMetadata?.album);
+  const mediaArtwork = Array.from(mediaMetadata?.artwork || [])
+    .map((entry) => artworkUrl(entry?.src)).filter(Boolean).pop() || null;
   let status = 'unknown';
   if (video.ended) status = 'stopped';
   else if (video.readyState > 0) status = video.paused ? 'paused' : 'playing';
@@ -105,7 +137,8 @@ STATE_READER_BODY = r"""
     artist,
     album,
     media_id: mediaId,
-    artwork_url: clean(image?.currentSrc || image?.src)
+    artwork_url: artworkUrl(image?.currentSrc || image?.getAttribute('src'))
+      || mediaArtwork
   };
 """
 
@@ -114,11 +147,11 @@ READ_PLAYBACK_STATE_SCRIPT = "JSON.stringify((() => {" + STATE_READER_BODY + "})
 # The observer handles YouTube Music's in-page player updates. A slow Python
 # poll remains as a reliability fallback and refreshes playback position.
 INSTALL_PLAYBACK_OBSERVER_SCRIPT = r"""
-(() => {
+JSON.stringify((() => {
   const install = () => {
     if (window.__ytMusicDesktopObserverInstalled) {
       window.__ytMusicDesktopScheduleSample?.();
-      return;
+      return {installed: true, reused: true};
     }
     const readState = () => {
       %s
@@ -147,7 +180,7 @@ INSTALL_PLAYBACK_OBSERVER_SCRIPT = r"""
       const observer = new MutationObserver((mutations) => {
         if (mutations.some(concernsPlayerBar)) schedule();
       });
-      observer.observe(document.body || document.documentElement, {
+      observer.observe(document.documentElement, {
         subtree: true,
         childList: true,
         characterData: true,
@@ -169,15 +202,20 @@ INSTALL_PLAYBACK_OBSERVER_SCRIPT = r"""
         }
       };
       new MutationObserver(attachVideoEvents).observe(
-        document.body || document.documentElement,
+        document.documentElement,
         {subtree: true, childList: true}
       );
       attachVideoEvents();
       window.__ytMusicDesktopObserverInstalled = true;
       schedule();
+      return {installed: true, reused: false};
   };
-  install();
-})()
+  try {
+    return install();
+  } catch (error) {
+    return {installed: false, error: String(error)};
+  }
+})())
 """ % (STATE_READER_BODY, SAMPLE_DEBOUNCE_MS)
 
 READ_OBSERVER_SAMPLE_SCRIPT = r"""
@@ -206,6 +244,7 @@ class PlaybackBridge(QObject):
         self._poll_in_flight = False
         self._has_sample = False
         self._pending_payload: dict[str, Any] | None = None
+        self._metadata_missing_since: float | None = None
 
         self._sample_timer = QTimer(self)
         self._sample_timer.setSingleShot(True)
@@ -241,14 +280,35 @@ class PlaybackBridge(QObject):
         self._has_sample = False
         self._pending_payload = None
         self._sample_timer.stop()
+        self._metadata_missing_since = None
 
     def _on_load_finished(self, success: bool) -> None:
         self._page_ready = success
         if success:
-            self._page.runJavaScript(INSTALL_PLAYBACK_OBSERVER_SCRIPT)
+            self._page.runJavaScript(
+                INSTALL_PLAYBACK_OBSERVER_SCRIPT,
+                self._observer_installation_finished,
+            )
             self.poll()
         else:
+            LOGGER.error("[BRIDGE] page load failed; bridge unavailable")
             self._state_store.update(PlaybackState.unknown(), "state_refresh")
+
+    @staticmethod
+    def _observer_installation_finished(result: Any) -> None:
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                pass
+        if isinstance(result, dict) and result.get("installed") is True:
+            LOGGER.info(
+                "[BRIDGE] initialized; document observer attached%s",
+                " (existing observer reused)" if result.get("reused") else "",
+            )
+            return
+        detail = result.get("error") if isinstance(result, dict) else result
+        LOGGER.error("[BRIDGE] observer initialization failed: %s", detail)
 
     def _receive_poll_sample(self, payload: Any) -> None:
         self._poll_in_flight = False
@@ -285,11 +345,35 @@ class PlaybackBridge(QObject):
             return
 
         previous = self._state_store.current
+        state = self._preserve_transient_metadata(previous, state)
         reason = self._reason_for_change(previous, state)
         if not self._has_sample:
             reason = "state_refresh"
             self._has_sample = True
         self._state_store.update(state, reason)
+
+    def _preserve_transient_metadata(
+        self,
+        previous: PlaybackState,
+        current: PlaybackState,
+    ) -> PlaybackState:
+        if current.metadata_available:
+            self._metadata_missing_since = None
+            return current
+        if (
+            not previous.metadata_available
+            or current.playback.status in {PlaybackStatus.STOPPED, PlaybackStatus.UNKNOWN}
+        ):
+            self._metadata_missing_since = None
+            return current
+
+        now = time.monotonic()
+        if self._metadata_missing_since is None:
+            self._metadata_missing_since = now
+        if now - self._metadata_missing_since <= METADATA_GRACE_SECONDS:
+            LOGGER.debug("[STATE] preserving metadata during transient empty sample")
+            return replace(current, track=previous.track)
+        return current
 
     @staticmethod
     def _state_from_payload(payload: dict[str, Any]) -> PlaybackState:
@@ -333,12 +417,13 @@ class PlaybackBridge(QObject):
             return "playback_changed"
         if previous.audio != current.audio:
             return "volume_changed"
+        if previous.playback.duration_ms != current.playback.duration_ms:
+            return "state_refresh"
         if _seek_detected(previous, current):
             return "seek"
         if (
             previous.track != current.track
             or previous.metadata_available != current.metadata_available
-            or previous.playback.duration_ms != current.playback.duration_ms
         ):
             return "state_refresh"
         return None

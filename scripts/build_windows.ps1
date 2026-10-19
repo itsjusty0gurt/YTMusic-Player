@@ -12,6 +12,7 @@ $bundlePath = Join-Path $outputRoot $bundleName
 $iconDirectory = Join-Path $projectRoot "src\ytmusic_player\assets\icons"
 $iconPath = Join-Path $iconDirectory "youtube_music_desktop.ico"
 $versionInfoPath = Join-Path $workRoot "windows-version-info.txt"
+$buildInfoPath = Join-Path $workRoot "build-info.json"
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Virtual environment not found. Create .venv and install the project first."
@@ -39,6 +40,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "Unable to generate Windows version metadata."
 }
 
+$sourceCommit = (git -C $projectRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $sourceCommit) {
+    $sourceCommit = "unknown"
+}
+$sourceDirty = [bool](git -C $projectRoot status --porcelain --untracked-files=normal)
+$buildInfo = [ordered]@{
+    commit = $sourceCommit
+    built_at = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    dirty = $sourceDirty
+}
+$buildInfo | ConvertTo-Json | Set-Content -LiteralPath $buildInfoPath -Encoding utf8
+
 if (Test-Path -LiteralPath $bundlePath) {
     Remove-Item -LiteralPath $bundlePath -Recurse -Force
 }
@@ -57,6 +70,7 @@ try {
         --icon $iconPath `
         --version-file $versionInfoPath `
         --add-data "$iconDirectory;ytmusic_player/assets/icons" `
+        --add-data "$buildInfoPath;ytmusic_player" `
         --paths (Join-Path $projectRoot "src") `
         --distpath $outputRoot `
         --workpath $workRoot `
